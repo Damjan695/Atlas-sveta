@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="sr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Atlas sveta</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+:root{--bg:#0b1220;--panel:#111c30;--panel2:#182741;--text:#f3f7ff;--muted:#aab8ce;--accent:#66d9c2}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,sans-serif}
+header{padding:20px 18px 12px;max-width:1200px;margin:auto}h1{margin:0;font-size:clamp(25px,4vw,38px)}header p{color:var(--muted);margin:7px 0 0}
+main{max-width:1200px;margin:auto;padding:0 14px 22px}.toolbar{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
+button{background:var(--panel2);border:1px solid #31435f;color:var(--text);padding:10px 14px;border-radius:12px;font-size:14px;cursor:pointer}
+button.active{background:var(--accent);border-color:var(--accent);color:#06201b;font-weight:700}
+.check{display:flex;align-items:center;gap:7px;background:var(--panel);border:1px solid #263852;border-radius:12px;padding:9px 12px;color:var(--muted);font-size:14px}
+#map,#globe{height:min(65vh,620px);min-height:360px;width:100%;border-radius:18px;overflow:hidden;background:#0e1b2e;border:1px solid #263852}
+#globe{display:none}.below{display:grid;grid-template-columns:1fr;gap:12px;margin-top:14px}
+.card{background:var(--panel);border:1px solid #263852;border-radius:16px;padding:16px}.card h2{font-size:18px;margin:0 0 8px}.muted{color:var(--muted);font-size:14px;line-height:1.5}
+#details{line-height:1.6}.flag{font-size:34px;vertical-align:middle;margin-right:8px}.hint{margin:12px 2px 0;color:var(--muted);font-size:13px}
+.leaflet-popup-content-wrapper,.leaflet-popup-tip{background:#111c30;color:#f3f7ff}.leaflet-popup-content{line-height:1.5}
+@media(min-width:760px){.below{grid-template-columns:1.3fr 1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>🌍 Atlas sveta</h1>
+  <p>Istražuj države, glavne gradove i prirodne lepote naše planete.</p>
+</header>
+<main>
+  <div class="toolbar" aria-label="Izbor prikaza">
+    <button id="flatBtn" class="active">🗺️ Ravna mapa</button>
+    <button id="globeBtn">🌐 3D globus</button>
+    <label class="check">Podloga <select id="mapStyle" style="background:#182741;color:#f3f7ff;border:0;padding:4px;border-radius:6px"><option value="street">Ulična karta</option><option value="topo" selected>Topografska</option><option value="physical">Fizička karta</option></select></label>
+    <label class="check"><input id="capitalsToggle" type="checkbox" checked> Gradovi</label>
+    <label class="check"><input id="natureToggle" type="checkbox"> Planine, reke i jezera</label>
+  </div>
+  <div id="map" aria-label="Interaktivna ravna mapa sveta"></div>
+  <div id="globe" aria-label="Interaktivni 3D globus"></div>
+  <section class="card" id="geoDetails" style="margin-top:14px">
+    <h2>📚 Detalji — planine, reke i jezera</h2>
+    <p class="muted">Pretraži geografske objekte ili izaberi vrstu. Klikni na rezultat da vidiš opis i da se mapa približi njegovoj lokaciji.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0">
+      <input id="featureSearch" type="search" placeholder="Pretraži naziv, npr. Dunav…" aria-label="Pretraži geografske objekte" style="flex:1;min-width:190px;background:#182741;color:#f3f7ff;border:1px solid #354963;border-radius:10px;padding:11px">
+      <select id="featureFilter" aria-label="Filtriraj geografsku vrstu" style="background:#182741;color:#f3f7ff;border:1px solid #354963;border-radius:10px;padding:10px"><option value="Sve">Sve vrste</option><option value="Planina">Planine i planinski venci</option><option value="Reka">Reke</option><option value="Jezero">Jezera</option></select>
+    </div>
+    <div id="featureCount" class="muted" style="margin-bottom:8px"></div>
+    <div id="featureList" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px"></div>
+  </section>
+  <div class="below">
+    <section class="card">
+      <h2>🔎 Geografski podaci</h2>
+      <div id="details" class="muted">Klikni na grad, državu ili prirodni objekat da vidiš geografske podatke.</div>
+    </section>
+    <section class="card">
+      <h2>🧭 Kako se koristi?</h2>
+      <div class="muted">• Prevuci mapu da promeniš prikaz.<br>• Zumiraj točkićem miša ili prstima.<br>• Klikni na grad, državu ili oznaku prirodnog objekta.<br>• Izaberi topografsku, uličnu ili fizičku podlogu.<br>• Prebaci se na 3D globus dugmetom iznad.</div>
+    </section>
+  </div>
+  <p class="hint">Mapa koristi stvarne geografske podloge i podatke OpenStreetMap / Esri. Potrebna je internet veza. Stanovništvo je približno; prirodni objekti su označeni na približnim lokacijama.</p>
+</main>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/globe.gl"></script>
+<script>
+const details=document.getElementById('details');
+const map=L.map('map',{worldCopyJump:true}).setView([20,0],2);
+const baseLayers={
+ street:L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap contributors'}),
+ topo:L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',{maxZoom:19,attribution:'Tiles © Esri — World Topographic Map'}),
+ physical:L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Physical_Map/MapServer/tile/{z}/{y}/{x}',{maxZoom:8,attribution:'Tiles © Esri — World Physical Map'})
+};
+baseLayers.topo.addTo(map);
+document.getElementById('mapStyle').addEventListener('change',e=>{Object.values(baseLayers).forEach(l=>map.removeLayer(l));baseLayers[e.target.value].addTo(map)});
+let capitalLayer=L.layerGroup().addTo(map);
+let countryLayer=null, countries=[];
+const capitals=[
+['Belgrade','Beograd',44.8176,20.4633,'🇷🇸','Srbija'],['Novi Sad','Novi Sad',45.2671,19.8335,'🇷🇸','Srbija'],['Niš','Niš',43.3209,21.8958,'🇷🇸','Srbija'],
+['Paris','Pariz',48.8566,2.3522,'🇫🇷','Francuska'],['London','London',51.5072,-0.1276,'🇬🇧','Ujedinjeno Kraljevstvo'],['Rome','Rim',41.9028,12.4964,'🇮🇹','Italija'],
+['Vienna','Beč',48.2082,16.3738,'🇦🇹','Austrija'],['Bern','Bern',46.948,7.4474,'🇨🇭','Švajcarska'],['Athens','Atina',37.9838,23.7275,'🇬🇷','Grčka'],
+['Madrid','Madrid',40.4168,-3.7038,'🇪🇸','Španija'],['Lisbon','Lisabon',38.7223,-9.1393,'🇵🇹','Portugal'],['Oslo','Oslo',59.9139,10.7522,'🇳🇴','Norveška'],
+['Stockholm','Stokholm',59.3293,18.0686,'🇸🇪','Švedska'],['Helsinki','Helsinki',60.1699,24.9384,'🇫🇮','Finska'],['Moscow','Moskva',55.7558,37.6173,'🇷🇺','Rusija'],
+['Prague','Prag',50.0755,14.4378,'🇨🇿','Češka'],['Budapest','Budimpešta',47.4979,19.0402,'🇭🇺','Mađarska'],['Warsaw','Varšava',52.2297,21.0122,'🇵🇱','Poljska'],
+['Berlin','Berlin',52.52,13.405,'🇩🇪','Nemačka'],['Amsterdam','Amsterdam',52.3676,4.9041,'🇳🇱','Holandija'],['Brussels','Brisel',50.8503,4.3517,'🇧🇪','Belgija'],
+['Copenhagen','Kopenhagen',55.6761,12.5683,'🇩🇰','Danska'],['Dublin','Dablin',53.3498,-6.2603,'🇮🇪','Irska'],['Zagreb','Zagreb',45.815,15.9819,'🇭🇷','Hrvatska'],
+['Ljubljana','Ljubljana',46.0569,14.5058,'🇸🇮','Slovenija'],['Sarajevo','Sarajevo',43.8563,18.4131,'🇧🇦','Bosna i Hercegovina'],['Skopje','Skoplje',41.9981,21.4254,'🇲🇰','Severna Makedonija'],
+['Podgorica','Podgorica',42.4304,19.2594,'🇲🇪','Crna Gora'],['Tirana','Tirana',41.3275,19.8187,'🇦🇱','Albanija'],['Istanbul','Istanbul',41.0082,28.9784,'🇹🇷','Turska'],
+['Tokyo','Tokio',35.6762,139.6503,'🇯🇵','Japan'],['Beijing','Peking',39.9042,116.4074,'🇨🇳','Kina'],['Shanghai','Šangaj',31.2304,121.4737,'🇨🇳','Kina'],
+['New Delhi','Nju Delhi',28.6139,77.209,'🇮🇳','Indija'],['Mumbai','Mumbaj',19.076,72.8777,'🇮🇳','Indija'],['Seoul','Seul',37.5665,126.978,'🇰🇷','Južna Koreja'],
+['Bangkok','Bangkok',13.7563,100.5018,'🇹🇭','Tajland'],['Singapore','Singapur',1.3521,103.8198,'🇸🇬','Singapur'],['Dubai','Dubai',25.2048,55.2708,'🇦🇪','Ujedinjeni Arapski Emirati'],
+['Jakarta','Džakarta',-6.2088,106.8456,'🇮🇩','Indonezija'],['Hanoi','Hanoj',21.0278,105.8342,'🇻🇳','Vijetnam'],['Kuala Lumpur','Kuala Lumpur',3.139,101.6869,'🇲🇾','Malezija'],
+['Washington, D.C.','Vašington',38.9072,-77.0369,'🇺🇸','SAD'],['New York','Njujork',40.7128,-74.006,'🇺🇸','SAD'],['Los Angeles','Los Anđeles',34.0522,-118.2437,'🇺🇸','SAD'],
+['Chicago','Čikago',41.8781,-87.6298,'🇺🇸','SAD'],['Vancouver','Vankuver',49.2827,-123.1207,'🇨🇦','Kanada'],['Toronto','Toronto',43.6532,-79.3832,'🇨🇦','Kanada'],
+['Ottawa','Otava',45.4215,-75.6972,'🇨🇦','Kanada'],['Mexico City','Meksiko Siti',19.4326,-99.1332,'🇲🇽','Meksiko'],['Havana','Havana',23.1136,-82.3666,'🇨🇺','Kuba'],
+['Kingston','Kingston',17.9712,-76.7936,'🇯🇲','Jamajka'],['Panama City','Panama Siti',8.9824,-79.5199,'🇵🇦','Panama'],['Bogotá','Bogota',4.711,-74.0721,'🇨🇴','Kolumbija'],
+['Lima','Lima',-12.0464,-77.0428,'🇵🇪','Peru'],['Brasília','Brazilija',-15.7939,-47.8828,'🇧🇷','Brazil'],['Rio de Janeiro','Rio de Žaneiro',-22.9068,-43.1729,'🇧🇷','Brazil'],
+['São Paulo','Sao Paulo',-23.5505,-46.6333,'🇧🇷','Brazil'],['Buenos Aires','Buenos Ajres',-34.6037,-58.3816,'🇦🇷','Argentina'],['Santiago','Santijago',-33.4489,-70.6693,'🇨🇱','Čile'],
+['Montevideo','Montevideo',-34.9011,-56.1645,'🇺🇾','Urugvaj'],['Quito','Kito',-0.1807,-78.4678,'🇪🇨','Ekvador'],['Caracas','Karakas',10.4806,-66.9036,'🇻🇪','Venecuela'],
+['Cairo','Kairo',30.0444,31.2357,'🇪🇬','Egipat'],['Nairobi','Najrobi',-1.2921,36.8219,'🇰🇪','Kenija'],['Cape Town','Kejptaun',-33.9249,18.4241,'🇿🇦','Južna Afrika'],
+['Johannesburg','Johanesburg',-26.2041,28.0473,'🇿🇦','Južna Afrika'],['Lagos','Lagos',6.5244,3.3792,'🇳🇬','Nigerija'],['Accra','Akra',5.6037,-0.187,'🇬🇭','Gana'],
+['Casablanca','Kazablanka',33.5731,-7.5898,'🇲🇦','Maroko'],['Addis Ababa','Adis Abeba',8.9806,38.7578,'🇪🇹','Etiopija'],['Dakar','Dakar',14.7167,-17.4677,'🇸🇳','Senegal'],
+['Canberra','Kanbera',-35.2809,149.13,'🇦🇺','Australija'],['Sydney','Sidnej',-33.8688,151.2093,'🇦🇺','Australija'],['Melbourne','Melburn',-37.8136,144.9631,'🇦🇺','Australija'],
+['Perth','Pert',-31.9505,115.8605,'🇦🇺','Australija'],['Brisbane','Brizbejn',-27.4698,153.0251,'🇦🇺','Australija'],['Auckland','Okland',-36.8509,174.7645,'🇳🇿','Novi Zeland'],
+['Wellington','Velington',-41.2865,174.7762,'🇳🇿','Novi Zeland'],['Suva','Suva',-18.1248,178.4501,'🇫🇯','Fidži'],['Port Moresby','Port Morsbi',-9.4438,147.1803,'🇵🇬','Papua Nova Gvineja']
+];
+// Najvažniji grad za svaku od 50 saveznih država SAD — odabrani veliki ili naročito značajan grad.
+const usStateCities = [
+['Birmingham','Birmingham',33.5186,-86.8104,'🇺🇸','SAD — Alabama'],['Anchorage','Enkoridž',61.2181,-149.9003,'🇺🇸','SAD — Aljaska'],['Phoenix','Feniks',33.4484,-112.074,'🇺🇸','SAD — Arizona'],['Little Rock','Litl Rok',34.7465,-92.2896,'🇺🇸','SAD — Arkanzas'],['Los Angeles','Los Anđeles',34.0522,-118.2437,'🇺🇸','SAD — Kalifornija'],['Denver','Denver',39.7392,-104.9903,'🇺🇸','SAD — Kolorado'],['Hartford','Hartford',41.7658,-72.6734,'🇺🇸','SAD — Konektikat'],['Wilmington','Vilmington',39.7391,-75.5398,'🇺🇸','SAD — Delaver'],['Jacksonville','Džeksonvil',30.3322,-81.6557,'🇺🇸','SAD — Florida'],['Atlanta','Atlanta',33.749,-84.388,'🇺🇸','SAD — Džordžija'],['Honolulu','Honolulu',21.3099,-157.8581,'🇺🇸','SAD — Havaji'],['Boise','Bojsi',43.615,-116.2023,'🇺🇸','SAD — Ajdaho'],['Chicago','Čikago',41.8781,-87.6298,'🇺🇸','SAD — Ilinois'],['Indianapolis','Indijanapolis',39.7684,-86.1581,'🇺🇸','SAD — Indijana'],['Des Moines','De Mojn',41.5868,-93.625,'🇺🇸','SAD — Ajova'],['Wichita','vičita',37.6872,-97.3301,'🇺🇸','SAD — Kanzas'],['Louisville','Luisvil',38.2527,-85.7585,'🇺🇸','SAD — Kentaki'],['New Orleans','Nju Orleans',29.9511,-90.0715,'🇺🇸','SAD — Luizijana'],['Portland','Portland',43.6591,-70.2568,'🇺🇸','SAD — Mejn'],['Baltimore','Baltimor',39.2904,-76.6122,'🇺🇸','SAD — Merilend'],['Boston','Boston',42.3601,-71.0589,'🇺🇸','SAD — Masačusets'],['Detroit','Detroit',42.3314,-83.0458,'🇺🇸','SAD — Mičigen'],['Minneapolis','Mineapolis',44.9778,-93.265,'🇺🇸','SAD — Minesota'],['Jackson','Džekson',32.2988,-90.1848,'🇺🇸','SAD — Misisipi'],['Kansas City','Kanzas Siti',39.0997,-94.5786,'🇺🇸','SAD — Misuri'],['Billings','Bilingz',45.7833,-108.5007,'🇺🇸','SAD — Montana'],['Omaha','Omaha',41.2565,-95.9345,'🇺🇸','SAD — Nebraska'],['Las Vegas','Las Vegas',36.1699,-115.1398,'🇺🇸','SAD — Nevada'],['Manchester','Mančester',42.9956,-71.4548,'🇺🇸','SAD — Nju Hempšir'],['Newark','Njuark',40.7357,-74.1724,'🇺🇸','SAD — Nju Džersi'],['Albuquerque','Albukerki',35.0844,-106.6504,'🇺🇸','SAD — Novi Meksiko'],['New York','Njujork',40.7128,-74.006,'🇺🇸','SAD — Njujork'],['Charlotte','Šarlot',35.2271,-80.8431,'🇺🇸','SAD — Severna Karolina'],['Fargo','Fargo',46.8772,-96.7898,'🇺🇸','SAD — Severna Dakota'],['Columbus','Kolambus',39.9612,-82.9988,'🇺🇸','SAD — Ohajo'],['Oklahoma City','Oklahoma Siti',35.4676,-97.5164,'🇺🇸','SAD — Oklahoma'],['Portland','Portland',45.5152,-122.6784,'🇺🇸','SAD — Oregon'],['Philadelphia','Filadelfija',39.9526,-75.1652,'🇺🇸','SAD — Pensilvanija'],['Providence','Providens',41.824,-71.4128,'🇺🇸','SAD — Rod Ajland'],['Charleston','Čarlston',32.7765,-79.9311,'🇺🇸','SAD — Južna Karolina'],['Sioux Falls','Si Fols',43.5446,-96.7311,'🇺🇸','SAD — Južna Dakota'],['Nashville','Nešvil',36.1627,-86.7816,'🇺🇸','SAD — Tenesi'],['Austin','Ostin',30.2672,-97.7431,'🇺🇸','SAD — Teksas'],['Salt Lake City','Solt Lejk Siti',40.7608,-111.891,'🇺🇸','SAD — Juta'],['Burlington','Burlington',44.4759,-73.2121,'🇺🇸','SAD — Vermont'],['Virginia Beach','Virdžinija Bič',36.8529,-75.978,'🇺🇸','SAD — Virdžinija'],['Seattle','Sijetl',47.6062,-122.3321,'🇺🇸','SAD — Vašington'],['Charleston','Čarlston',38.3498,-81.6326,'🇺🇸','SAD — Zapadna Virdžinija'],['Milwaukee','Milvoki',43.0389,-87.9065,'🇺🇸','SAD — Viskonsin'],['Cheyenne','Šajen',41.14,-104.8202,'🇺🇸','SAD — Vajoming']
+];
+capitals.push(...usStateCities);
+
+function drawCapitals(){capitalLayer.clearLayers();if(!document.getElementById('capitalsToggle').checked)return;capitals.forEach(c=>L.circleMarker([c[2],c[3]],{radius:4,color:'#fff',weight:1,fillColor:'#e7a84b',fillOpacity:1}).bindTooltip(c[1]+' — '+c[5]).on('click',()=>showCity(c)).addTo(capitalLayer));}
+drawCapitals();
+document.getElementById('capitalsToggle').addEventListener('change',drawCapitals);
+const natureLayer=L.layerGroup();
+const mountainIcon=L.divIcon({className:'geo-label',html:'<span style="background:#47352a;color:#fff;border:1px solid #d8b48b;padding:3px 6px;border-radius:8px;font-size:12px;white-space:nowrap">▲ <b>PLANINA</b></span>',iconSize:[80,20],iconAnchor:[40,10]});
+const riverIcon=L.divIcon({className:'geo-label',html:'<span style="background:#123f69;color:#fff;border:1px solid #78bce8;padding:3px 6px;border-radius:8px;font-size:12px;white-space:nowrap">〰 <b>REKA</b></span>',iconSize:[62,20],iconAnchor:[31,10]});
+const lakeIcon=L.divIcon({className:'geo-label',html:'<span style="background:#123f69;color:#fff;border:1px solid #78bce8;padding:3px 6px;border-radius:8px;font-size:12px;white-space:nowrap">● <b>JEZERO</b></span>',iconSize:[74,20],iconAnchor:[37,10]});
+const features=[
+ {name:'Himalaji',type:'Planinski venac',coords:[27.98,86.92],fact:'Najviši planinski venac na svetu; u njemu se nalazi Mont Everest (Sagarmata/Čomolungma), visok oko 8.849 m.'},
+ {name:'Alpi',type:'Planinski venac',coords:[46.5,10.8],fact:'Veliki evropski planinski venac koji se prostire kroz više država, uključujući Francusku, Švajcarsku, Italiju i Austriju.'},
+ {name:'Andi',type:'Planinski venac',coords:[-15,-70],fact:'Dug planinski venac duž zapadne strane Južne Amerike.'},
+ {name:'Stenovite planine',type:'Planinski venac',coords:[44,-110],fact:'Veliki planinski sistem zapadne Severne Amerike.'},
+ {name:'Kavkaz',type:'Planinski venac',coords:[42.5,44.5],fact:'Planinski region između Crnog i Kaspijskog mora.'},
+ {name:'Atlas',type:'Planinski venac',coords:[31.2,-6.2],fact:'Planinski sistem severozapadne Afrike.'},
+ {name:'Ural',type:'Planinski venac',coords:[60,59],fact:'Planinski venac koji se često uzima kao deo prirodne granice Evrope i Azije.'},
+ {name:'Nil',type:'Reka',coords:[15.5,32.5],fact:'Jedna od najdužih reka na svetu; protiče kroz severoistočnu Afriku i uliva se u Sredozemno more.'},
+ {name:'Amazon',type:'Reka',coords:[-3.1,-60.0],fact:'Ogromna reka Južne Amerike koja protiče kroz najveću tropsku prašumu na svetu.'},
+ {name:'Dunav',type:'Reka',coords:[45.25,19.85],fact:'Druga najduža reka Evrope; protiče kroz ili uz više evropskih država i uliva se u Crno more.'},
+ {name:'Jangce',type:'Reka',coords:[30.6,112.2],fact:'Najduža reka u Kini i Aziji.'},
+ {name:'Misisipi',type:'Reka',coords:[35.1,-90.1],fact:'Jedna od glavnih rečnih osa Severne Amerike.'},
+ {name:'Volga',type:'Reka',coords:[48.7,44.5],fact:'Najduža reka Evrope; uliva se u Kaspijsko jezero.'},
+ {name:'Jezero Bajkal',type:'Jezero',coords:[53.5,108.0],fact:'Najdublje jezero na svetu i jedno od najvećih svetskih slatkovodnih jezera po zapremini.'},
+ {name:'Viktorijino jezero',type:'Jezero',coords:[-1,33],fact:'Veliko jezero u istočnoj Africi, na području Tanzanije, Ugande i Kenije.'},
+ {name:'Gornje jezero',type:'Jezero',coords:[47.7,-87.5],fact:'Najveće po površini među Velikim jezerima Severne Amerike.'},
+ {name:'Kaspijsko jezero',type:'Jezero',coords:[41.8,50.7],fact:'Najveća zatvorena vodena površina na svetu; uprkos nazivu, geografski je jezero.'},
+ {name:'Titikaka',type:'Jezero',coords:[-15.8,-69.4],fact:'Visokoplaninsko jezero u Andima, na granici Perua i Bolivije.'},
+ {name:'Ženevsko jezero',type:'Jezero',coords:[46.45,6.55],fact:'Veliko alpsko jezero koje dele Švajcarska i Francuska.'}
+];
+features.push(
+ {name:'Kordiljeri',type:'Planinski venac',coords:[40,-115],fact:'Širok planinski sistem zapadne Severne Amerike, koji obuhvata više planinskih lanaca.'},
+ {name:'Sijera Nevada',type:'Planinski venac',coords:[37.5,-119.5],fact:'Planinski venac u Kaliforniji i Nevadi; tu se nalaze Mount Whitney i poznati nacionalni parkovi.'},
+ {name:'Apalači',type:'Planinski venac',coords:[38,-80],fact:'Drevni planinski sistem na istoku Severne Amerike, koji se proteže od Kanade do jugoistoka SAD.'},
+ {name:'Kaskadne planine',type:'Planinski venac',coords:[44,-121],fact:'Planinski lanac na severozapadu SAD poznat po vulkanskim vrhovima, među kojima je Mount Rainier.'},
+ {name:'Sierra Madre',type:'Planinski venac',coords:[23,-103],fact:'Veliki planinski sistemi Meksika, uključujući zapadni i istočni venac.'},
+ {name:'Veliki razvodni venac',type:'Planinski venac',coords:[-25,147],fact:'Glavni planinski sistem istočne Australije.'},
+ {name:'Drakensberg',type:'Planinski venac',coords:[-29,29],fact:'Visok planinski lanac u južnoj Africi, naročito u Lesotu i Južnoafričkoj Republici.'},
+ {name:'Pirineji',type:'Planinski venac',coords:[42.7,0.7],fact:'Planinski venac koji čini prirodnu granicu između Španije i Francuske.'},
+ {name:'Karpati',type:'Planinski venac',coords:[47.5,24.5],fact:'Veliki planinski luk srednje i istočne Evrope, uključujući područje Rumunije i Slovačke.'},
+ {name:'Apenini',type:'Planinski venac',coords:[42.5,13.2],fact:'Planinski lanac koji se proteže duž većeg dela Apeninskog poluostrva u Italiji.'},
+ {name:'Tjen Šan',type:'Planinski venac',coords:[42,80],fact:'Veliki planinski sistem srednje Azije.'},
+ {name:'Altaj',type:'Planinski venac',coords:[49,87],fact:'Planinski region gde se susreću područja Rusije, Mongolije, Kine i Kazahstana.'},
+ {name:'Kilimandžaro',type:'Planina',coords:[-3.067,37.355],fact:'Najviša planina Afrike, visoka oko 5.895 m; nalazi se u Tanzaniji.'},
+ {name:'Mont Blan',type:'Planina',coords:[45.8326,6.8652],fact:'Jedan od najviših vrhova Alpa, visok približno 4.806 m; tačna visina snežnog vrha varira.'},
+ {name:'Aconcagua',type:'Planina',coords:[-32.6532,-70.0109],fact:'Najviši vrh Južne Amerike i najviši vrh izvan Azije, visok oko 6.961 m.'},
+ {name:'Denali',type:'Planina',coords:[63.0695,-151.0074],fact:'Najviši vrh Severne Amerike, visok oko 6.190 m; nalazi se na Aljasci.'},
+ {name:'Missouri',type:'Reka',coords:[38.8,-90.1],fact:'Najduža pritoka Misisipija; zajedno sa njim čini veliki rečni sistem Severne Amerike.'},
+ {name:'Kolorado',type:'Reka',coords:[36.1,-112.1],fact:'Reka koja je tokom miliona godina oblikovala Veliki kanjon na jugozapadu SAD.'},
+ {name:'Rio Grande',type:'Reka',coords:[29.5,-104.5],fact:'Reka koja čini veliki deo granice između SAD i Meksika.'},
+ {name:'Jukon',type:'Reka',coords:[64,-140],fact:'Velika reka severozapadne Severne Amerike koja protiče kroz Kanadu i Aljasku.'},
+ {name:'Sveti Lorens',type:'Reka',coords:[46.5,-72],fact:'Rečni izlaz Velikih jezera prema Atlantskom okeanu.'},
+ {name:'Mekong',type:'Reka',coords:[15,105],fact:'Velika reka jugoistočne Azije važna za poljoprivredu i ribarstvo.'},
+ {name:'Ganges',type:'Reka',coords:[25.3,83.0],fact:'Jedna od najvažnijih reka južne Azije, koja protiče kroz Indiju i Bangladeš.'},
+ {name:'Ind',type:'Reka',coords:[27,68],fact:'Velika reka južne Azije, naročito važna za Pakistan.'},
+ {name:'Tigar',type:'Reka',coords:[33,44],fact:'Reka jugozapadne Azije koja prolazi kroz područje Iraka.'},
+ {name:'Eufrat',type:'Reka',coords:[35,39],fact:'Jedna od istorijski najvažnijih reka Mesopotamije.'},
+ {name:'Rajna',type:'Reka',coords:[50.2,7.6],fact:'Važna evropska plovna reka koja protiče kroz ili uz više država i uliva se u Severno more.'},
+ {name:'Rona',type:'Reka',coords:[45.7,4.8],fact:'Reka koja izvire u Švajcarskim Alpima i protiče kroz Francusku do Sredozemnog mora.'},
+ {name:'Po',type:'Reka',coords:[45.1,10.8],fact:'Najduža reka Italije; protiče kroz severni deo zemlje.'},
+ {name:'Lena',type:'Reka',coords:[63,127],fact:'Jedna od najvećih reka Sibira, koja se uliva u Arktički okean.'},
+ {name:'Jenisej',type:'Reka',coords:[60,90],fact:'Jedan od najvećih rečnih sistema Sibira, koji teče ka Arktičkom okeanu.'},
+ {name:'Ob',type:'Reka',coords:[61,72],fact:'Velika sibirska reka koja se uliva u Karsko more.'},
+ {name:'Murray',type:'Reka',coords:[-34,142],fact:'Jedna od najvažnijih i najdužih reka Australije.'},
+ {name:'Parana',type:'Reka',coords:[-27,-56],fact:'Velika reka Južne Amerike koja protiče kroz Brazil, Paragvaj i Argentinu.'},
+ {name:'Orinoko',type:'Reka',coords:[7,-65],fact:'Velika reka severne Južne Amerike, najvećim delom u Venecueli.'},
+ {name:'Kongo',type:'Reka',coords:[-1,17],fact:'Jedna od najvećih reka Afrike, koja protiče kroz područje ekvatorijalnih prašuma.'},
+ {name:'Niger',type:'Reka',coords:[13,-5],fact:'Glavna reka zapadne Afrike, sa velikim lukom kroz više država.'},
+ {name:'Zambezi',type:'Reka',coords:[-18,26],fact:'Afrička reka na kojoj se nalaze Viktorijini vodopadi.'},
+ {name:'Jezero Tanganjika',type:'Jezero',coords:[-6,29.5],fact:'Jedno od najdubljih jezera na svetu, u istočnoj Africi.'},
+ {name:'Jezero Malavi',type:'Jezero',coords:[-12,34.5],fact:'Veliko i veoma duboko jezero u istočnoj Africi.'},
+ {name:'Veliko Medveđe jezero',type:'Jezero',coords:[66,-121],fact:'Najveće jezero koje se u celosti nalazi u Kanadi.'},
+ {name:'Jezero Mičigen',type:'Jezero',coords:[44,-87],fact:'Jedno od Velikih jezera Severne Amerike; jedino od njih koje se u celosti nalazi u SAD.'},
+ {name:'Jezero Iri',type:'Jezero',coords:[42.2,-81.2],fact:'Jedno od Velikih jezera, na granici SAD i Kanade.'},
+ {name:'Jezero Huron',type:'Jezero',coords:[44.8,-82.4],fact:'Jedno od pet Velikih jezera Severne Amerike.'},
+ {name:'Jezero Ontario',type:'Jezero',coords:[43.7,-78],fact:'Najistočnije od pet Velikih jezera Severne Amerike.'},
+ {name:'Jezero Taho',type:'Jezero',coords:[39.1,-120],fact:'Duboko alpsko jezero na granici Kalifornije i Nevade.'},
+ {name:'Veliko Slano jezero',type:'Jezero',coords:[41.1,-112.5],fact:'Veliko slano jezero u Juti; njegova površina značajno varira.'},
+ {name:'Jezero Okečobi',type:'Jezero',coords:[26.9,-80.8],fact:'Veliko plitko jezero na Floridi.'},
+ {name:'Jezero Vanern',type:'Jezero',coords:[58.9,13.3],fact:'Najveće jezero Švedske i jedno od najvećih u Evropi.'},
+ {name:'Ladoga',type:'Jezero',coords:[60.8,31.5],fact:'Najveće jezero u Evropi, nalazi se u severozapadnoj Rusiji.'},
+ {name:'Onega',type:'Jezero',coords:[61.7,35.5],fact:'Jedno od najvećih jezera Evrope, u severozapadnoj Rusiji.'},
+ {name:'Aralsko jezero',type:'Jezero',coords:[45,60.5],fact:'Vodena površina srednje Azije koja se znatno smanjila zbog preusmeravanja pritoka.'}
+);
+
+function showFeature(f, zoom=true){
+ details.innerHTML='<strong>🌍 '+f.name+'</strong><br><span class="muted">Vrsta:</span> '+f.type+'<br><br>'+f.fact+'<br><br><span class="muted">Približne koordinate:</span> '+f.coords[0].toFixed(2)+', '+f.coords[1].toFixed(2);
+ if(zoom){document.getElementById('map').style.display='block';document.getElementById('globe').style.display='none';document.getElementById('flatBtn').classList.add('active');document.getElementById('globeBtn').classList.remove('active');map.flyTo(f.coords,Math.max(map.getZoom(),4),{duration:1});}
+}
+features.forEach(f=>{const icon=(f.type==='Planinski venac'||f.type==='Planina')?mountainIcon:f.type==='Reka'?riverIcon:lakeIcon;L.marker(f.coords,{icon}).bindTooltip(f.name).on('click',()=>showFeature(f,false)).addTo(natureLayer)});
+const featureSearch=document.getElementById('featureSearch'), featureFilter=document.getElementById('featureFilter');
+function renderFeatureList(){
+ const q=featureSearch.value.trim().toLocaleLowerCase('sr'); const kind=featureFilter.value;
+ const filtered=features.filter(f=>(kind==='Sve'||(kind==='Planina'&&(f.type==='Planina'||f.type==='Planinski venac'))||f.type===kind)&&(!q||(f.name+' '+f.type+' '+f.fact).toLocaleLowerCase('sr').includes(q)));
+ document.getElementById('featureCount').textContent='Prikazano '+filtered.length+' od '+features.length+' geografskih objekata.';
+ const list=document.getElementById('featureList');list.innerHTML='';
+ filtered.forEach(f=>{const b=document.createElement('button');b.type='button';b.style.cssText='text-align:left;background:#182741;color:#f3f7ff;border:1px solid #354963;border-radius:10px;padding:11px;cursor:pointer';const symbol=(f.type==='Reka'?'〰':f.type==='Jezero'?'💧':'⛰️');b.innerHTML='<strong>'+symbol+' '+f.name+'</strong><br><span style="color:#aab8ce;font-size:12px">'+f.type+'</span>';b.addEventListener('click',()=>showFeature(f,true));list.appendChild(b)});
+ if(!filtered.length)list.innerHTML='<p class="muted">Nema rezultata. Probaj drugi naziv ili izaberi „Sve vrste”.</p>';
+}
+featureSearch.addEventListener('input',renderFeatureList);featureFilter.addEventListener('change',renderFeatureList);renderFeatureList();
+document.getElementById('natureToggle').addEventListener('change',e=>{if(e.target.checked)natureLayer.addTo(map);else map.removeLayer(natureLayer)});
+fetch('https://raw.githubusercontent.com/deldesierto/geo-countries/master/data/countries.geojson')
+.then(r=>{if(!r.ok)throw new Error('geojson');return r.json()})
+.then(data=>{
+ countries=data.features;
+ countryLayer=L.geoJSON(data,{style:()=>({color:'#a8c7d8',weight:0.7,fillColor:'#247c89',fillOpacity:0.13}),onEachFeature:(f,layer)=>{
+ const p=f.properties||{};const name=p.ADMIN||p.name||p.name_en||'Nepoznata država';
+ layer.on({mouseover:e=>e.target.setStyle({fillOpacity:.35,weight:1.5}),mouseout:e=>countryLayer.resetStyle(e.target),click:()=>showCountry(name,p)});
+ layer.bindTooltip(name,{sticky:true});
+ }}).addTo(map);
+ }).catch(()=>{});
+
+const cityInfo = {
+'Beograd':{population:'oko 1,2 miliona u širem gradskom području',fact:'Beograd se nalazi na ušću Save u Dunav. Među njegovim poznatim znamenitostima su Kalemegdan i Hram Svetog Save.'},
+'Novi Sad':{population:'oko 370.000 u administrativnom području',fact:'Novi Sad je poznat po Petrovaradinskoj tvrđavi i muzičkom festivalu EXIT.'},
+'Pariz':{population:'oko 2,1 miliona u gradu',fact:'Pariz je poznat po Ajfelovom tornju, muzeju Luvr i reci Seni.'},
+'London':{population:'oko 9 miliona u širem gradskom području',fact:'Londonom protiče Temza, a među znamenitostima su Big Ben i Tower Bridge.'},
+'Beč':{population:'oko 2 miliona',fact:'Beč je glavni grad Austrije i poznat je po klasičnoj muzici, dvorcu Šenbrun i kafićima.'},
+'Cirih':{population:'oko 430.000 u gradu',fact:'Cirih leži uz Ciriško jezero i poznat je po starom gradu i pogledu na Alpe u daljini.'},
+'Tokio':{population:'oko 14 miliona u prefekturi Tokio',fact:'Tokio spaja moderne četvrti, kao što je Šibuja, sa tradicionalnim hramovima.'},
+'Njujork':{population:'oko 8,5 miliona',fact:'Njujork čine pet opština, a poznat je po Central parku, Tajms skveru i Kipu slobode.'},
+'Vankuver':{population:'oko 700.000 u samom gradu',fact:'Vankuver je između Tihog okeana i planina, pa su priroda i gradski život veoma blizu.'},
+'Sidnej':{population:'oko 5,5 miliona u širem gradskom području',fact:'Sidnej je poznat po Operi u Sidneju i mostu Harbour Bridge.'},
+'Rim':{population:'oko 2,8 miliona',fact:'Rim je poznat po Koloseumu, rimskom Forumu i istoriji staroj više od dve hiljade godina.'},
+'Peking':{population:'više od 20 miliona u opštini',fact:'Peking je kineska prestonica, sa Zabranjenim gradom i pristupom delovima Kineskog zida.'},
+'Kairo':{population:'više od 10 miliona u gradu',fact:'Kairo se nalazi blizu čuvenih piramida u Gizi i reke Nil.'},
+'Sidnej':{population:'oko 5,5 miliona u širem gradskom području',fact:'Sidnej je poznat po Operi u Sidneju i mostu Harbour Bridge.'},
+'Vankuver':{population:'oko 700.000 u samom gradu',fact:'Vankuver je između Tihog okeana i planina, pa su priroda i gradski život veoma blizu.'}
+};
+// Sažeti podaci za odabrani važan grad u svakoj saveznoj državi SAD.
+Object.assign(cityInfo, {
+'Birmingham':{population:'oko 200.000 u gradu',fact:'Najveći grad Alabame po značaju metro područja, poznat po istoriji industrije gvožđa i čelika.'},
+'Enkoridž':{population:'oko 290.000',fact:'Najveći grad Aljaske; okružen je planinama i blizu je velikih divljih prirodnih područja.'},
+'Feniks':{population:'oko 1,6 miliona',fact:'Glavni i najveći grad Arizone, poznat po pustinjskom Sonorskom pejzažu i veoma toplim letima.'},
+'Litl Rok':{population:'oko 200.000',fact:'Glavni grad Arkanzasa, smešten uz reku Arkanzas.'},
+'Los Anđeles':{population:'oko 3,8 miliona',fact:'Veliki grad južne Kalifornije, poznat po Holivudu, filmskoj industriji i pacifičkoj obali.'},
+'Denver':{population:'oko 720.000',fact:'Glavni grad Kolorada, poznat kao „Mile High City” jer je na nadmorskoj visini od približno jedne milje.'},
+'Hartford':{population:'oko 120.000',fact:'Glavni grad Konektikata, u dolini reke Konektikat.'},
+'Vilmington':{population:'oko 70.000',fact:'Najveći grad Delavera, blizu ušća reke Kristina u reku Delaver.'},
+'Džeksonvil':{population:'oko 1 milion',fact:'Najveći grad Floride po površini i veliki lučki grad na obali Atlantika.'},
+'Atlanta':{population:'oko 500.000',fact:'Glavni grad Džordžije i važno saobraćajno, poslovno i kulturno središte juga SAD.'},
+'Honolulu':{population:'oko 350.000',fact:'Glavni grad Havaja, na ostrvu Oahu; poznat po plaži Vaikiki i luci Perl Harbor.'},
+'Bojsi':{population:'oko 240.000',fact:'Glavni grad Ajdaha, uz reku Bojsi i blizu podnožja Stenovitih planina.'},
+'Čikago':{population:'oko 2,7 miliona',fact:'Najveći grad Ilinoisa, na obali jezera Mičigen; poznat po arhitekturi i dubokoj pici.'},
+'Indijanapolis':{population:'oko 880.000',fact:'Glavni grad Indijane, poznat po čuvenoj automobilskoj trci Indianapolis 500.'},
+'De Mojn':{population:'oko 215.000',fact:'Glavni grad Ajove, u oblasti poljoprivrede i proizvodnje hrane.'},
+'vičita':{population:'oko 400.000',fact:'Najveći grad Kanzasa, istorijski poznat po avio-industriji.'},
+'Luisvil':{population:'oko 620.000',fact:'Najveći grad Kentakija, poznat po Kentucky Derby konjskoj trci.'},
+'Nju Orleans':{population:'oko 360.000',fact:'Grad u Luizijani poznat po džez muzici, karnevalu Mardi Gras i delti Misisipija.'},
+'Portland':{population:'oko 70.000 u Mejnu; oko 650.000 u Oregonu',fact:'Ime Portland postoji u dve države: Portland u Mejnu je obalski lučki grad, a Portland u Oregonu je veliki grad na severozapadu. Ovaj marker prikazuje Portland u Oregonu.'},
+'Baltimor':{population:'oko 570.000',fact:'Veliki lučki grad Merilenda na zalivu Česapik, poznat po svojoj pomorskoj istoriji.'},
+'Boston':{population:'oko 675.000',fact:'Glavni grad Masačusetsa, važan univerzitetski i istorijski centar američke revolucije.'},
+'Detroit':{population:'oko 640.000',fact:'Veliki grad Mičigena, poznat po automobilskoj industriji i muzičkoj tradiciji Motowna.'},
+'Mineapolis':{population:'oko 430.000',fact:'Jedan od glavnih gradova blizanačkog područja Twin Cities, uz reku Misisipi.'},
+'Džekson':{population:'oko 150.000',fact:'Glavni grad Misisipija, u južnom delu delte i sliva reke Misisipi.'},
+'Kanzas Siti':{population:'oko 510.000',fact:'Veliki grad Misurija poznat po džez tradiciji i roštilju; postoji i drugi Kanzas Siti u susednoj državi Kanzas.'},
+'Bilingz':{population:'oko 120.000',fact:'Najveći grad Montane, okružen prostranim prerijama i stenovitim predelima.'},
+'Omaha':{population:'oko 490.000',fact:'Najveći grad Nebraske, na reci Misuri.'},
+'Las Vegas':{population:'oko 660.000',fact:'Najveći grad Nevade, smešten u pustinji Mojave.'},
+'Mančester':{population:'oko 115.000',fact:'Najveći grad Nju Hempšira, na reci Merimak.'},
+'Njuark':{population:'oko 310.000',fact:'Veliki grad Nju Džersija, blizu Njujorka i Atlantske obale.'},
+'Albukerki':{population:'oko 560.000',fact:'Najveći grad Novog Meksika, uz reku Rio Grande i blizu planina Sandija.'},
+'Njujork':{population:'oko 8,5 miliona',fact:'Najveći grad države Njujork i jedan od najuticajnijih svetskih finansijskih i kulturnih centara.'},
+'Šarlot':{population:'oko 900.000',fact:'Najveći grad Severne Karoline, važan finansijski centar.'},
+'Fargo':{population:'oko 130.000',fact:'Najveći grad Severne Dakote, u dolini reke Red River.'},
+'Kolambus':{population:'oko 900.000',fact:'Glavni i najveći grad Ohaja, sa velikim univerzitetom i istraživačkim ustanovama.'},
+'Oklahoma Siti':{population:'oko 700.000',fact:'Glavni i najveći grad Oklahome, poznat po stočarskoj i energetskoj istoriji.'},
+'Filadelfija':{population:'oko 1,6 miliona',fact:'Najveći grad Pensilvanije, važan za istoriju SAD i mesto potpisivanja Deklaracije nezavisnosti.'},
+'Providens':{population:'oko 190.000',fact:'Glavni grad Rod Ajlanda, blizu zaliva Naratanset.'},
+'Čarlston':{population:'oko 150.000 u Južnoj Karolini; oko 50.000 u Zapadnoj Virdžiniji',fact:'Postoje gradovi istog imena u obe Karoline/Virdžiniji: marker je u Južnoj Karolini, poznatoj po istorijskom centru i luci.'},
+'Si Fols':{population:'oko 200.000',fact:'Najveći grad Južne Dakote, nazvan po vodopadima na reci Big Sioux.'},
+'Nešvil':{population:'oko 690.000',fact:'Glavni grad Tenesija, poznat kao središte kantri muzike.'},
+'Ostin':{population:'oko 1 milion',fact:'Glavni grad Teksasa, poznat po muzici uživo, univerzitetu i tehnološkoj industriji.'},
+'Solt Lejk Siti':{population:'oko 200.000',fact:'Glavni grad Jute, uz Veliko Slano jezero i blizu planina Wasatch.'},
+'Burlington':{population:'oko 45.000',fact:'Najveći grad Vermonta, na obali jezera Čemplejn.'},
+'Virdžinija Bič':{population:'oko 450.000',fact:'Veliki obalski grad Virdžinije, poznat po dugoj atlantskoj obali.'},
+'Sijetl':{population:'oko 750.000',fact:'Veliki grad države Vašington, između Puget Sounda i jezera Vašington, sa pogledom na Kaskadne planine.'},
+'Čarlston':{population:'oko 50.000',fact:'Glavni grad Zapadne Virdžinije, na ušću reka Elk i Kanava.'},
+'Milvoki':{population:'oko 560.000',fact:'Najveći grad Viskonsina, na obali jezera Mičigen.'},
+'Šajen':{population:'oko 65.000',fact:'Glavni grad Vajominga, na visokim ravnicama istočno od Stenovitih planina.'}
+});
+
+function showCity(c){
+ let info=cityInfo[c[1]]||cityInfo[c[0]]||{population:'Podatak ćemo dodati iz pouzdane baze stanovništva.',fact:c[1]+' je grad u državi '+c[5]+'.'};
+ if(c[5]==='SAD — Mejn') info={population:'oko 70.000',fact:'Portland u Mejnu je obalski lučki grad poznat po svetionicima i istorijskoj luci.'};
+ if(c[5]==='SAD — Oregon') info={population:'oko 650.000',fact:'Portland u Oregonu je veliki grad na severozapadu SAD, blizu reke Kolumbija i Kaskadnih planina.'};
+ if(c[5]==='SAD — Južna Karolina') info={population:'oko 150.000',fact:'Čarlston u Južnoj Karolini je istorijski lučki grad poznat po starom centru i atlantskoj obali.'};
+ if(c[5]==='SAD — Zapadna Virdžinija') info={population:'oko 50.000',fact:'Čarlston je glavni grad Zapadne Virdžinije, na ušću reka Elk i Kanava.'};
+ const photoUrl='https://commons.wikimedia.org/wiki/Special:MediaSearch?type=image&search='+encodeURIComponent(c[1]+' '+c[5]+' city');
+ details.innerHTML='<span class="flag">'+c[4]+'</span><strong>'+c[1]+'</strong><br><span class="muted">Država:</span> '+c[5]+'<br><span class="muted">Stanovništvo:</span> '+info.population+'<br><br><strong>💡 Zanimljivost</strong><br>'+info.fact+'<br><br><span class="muted">Koordinate:</span> '+c[2].toFixed(2)+', '+c[3].toFixed(2)+'<br><br><a href="'+photoUrl+'" target="_blank" rel="noopener" style="color:#66d9c2;font-weight:700">📷 Pogledaj fotografije grada ↗</a>';
+}
+
+function showCountry(name,p){
+ const capital=capitals.find(c=>name.toLowerCase().includes(c[0].toLowerCase())||c[0].toLowerCase().includes(name.toLowerCase()));
+ const flag=p.ISO_A2&&p.ISO_A2.length===2?p.ISO_A2.toUpperCase().replace(/./g,ch=>String.fromCodePoint(127397+ch.charCodeAt(0))):'🌍';
+ details.innerHTML='<span class="flag">'+flag+'</span><strong>'+name+'</strong><br><span class="muted">Glavni grad:</span> '+(capital?capital[1]:'Podatak ćemo dodati')+'<br><span class="muted">Broj stanovnika:</span> U sledećem koraku ćemo povezati pouzdanu bazu podataka za stanovništvo.';
+}
+document.getElementById('flatBtn').onclick=()=>{document.getElementById('map').style.display='block';document.getElementById('globe').style.display='none';document.getElementById('flatBtn').classList.add('active');document.getElementById('globeBtn').classList.remove('active');setTimeout(()=>map.invalidateSize(),100)};
+let globeMade=false;
+document.getElementById('globeBtn').onclick=()=>{
+ document.getElementById('map').style.display='none';document.getElementById('globe').style.display='block';document.getElementById('globeBtn').classList.add('active');document.getElementById('flatBtn').classList.remove('active');
+ if(!globeMade){const el=document.getElementById('globe');const g=Globe()(el).backgroundColor('#0b1220').globeImageUrl('https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg').bumpImageUrl('https://unpkg.com/three-globe/example/img/earth-topology.png').showAtmosphere(true).atmosphereColor('#66d9c2').atmosphereAltitude(.18).pointsData(capitals.map(c=>({lat:c[2],lng:c[3],name:c[1]+' — '+c[5]}))).pointAltitude(.012).pointRadius(.25).pointColor(()=> '#f2b85b').pointLabel('name');g.controls().autoRotate=true;g.controls().autoRotateSpeed=.35;globeMade=true;}
+};
+</script>
+</body>
+</html>
